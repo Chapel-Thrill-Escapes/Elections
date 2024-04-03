@@ -1,0 +1,96 @@
+#' ---
+#' title: "Elections"
+#' output: null_document
+#' date: "`r Sys.Date()`"
+#' ---
+#' 
+## ----setup, include=FALSE----------------------------------------------------------------------
+if(!require(dplyr)) {install.packages("dplyr"); library(dplyr)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+if(!require(stringi)) {install.packages("stringi"); library(stringi)}
+
+#' 
+## ----------------------------------------------------------------------------------------------
+data <- read.csv("./data/ElectionResults.csv", header = FALSE)
+cols_to_keep_indices <- integer()
+for (i in 1:ncol(data)) {
+  # Access the value in the first row and current column
+  header_value <- data[2, i]  # Adjusted to data[1, i] to refer to the first row, considering header=FALSE
+  if (str_detect(header_value, "Please rank your preference of candidates for")) {
+    # Add the column index to the list
+    cols_to_keep_indices <- c(cols_to_keep_indices, i)
+  }
+}
+data <- data[,cols_to_keep_indices]
+data <- data[-1,]
+title_mapping <- list(
+  "Chief Executive Officer" = "CEO",
+  "Chief Financial Officer" = "CFO",
+  "Chief Operations Officer" = "COO",
+  "Chief Marketing Officer" = "CMO"
+)
+new_col_names <- character(length = length(cols_to_keep_indices))
+# Loop through each column index in cols_to_keep_indices
+for (i in seq_along(cols_to_keep_indices)) {
+  header_value <- data[1, i]  # Access the title in the first row for the current column
+  header_value_ascii <- stri_trans_general(header_value, "Latin-ASCII")
+  
+  # Extract the position title and the rank number
+  for (title in names(title_mapping)) {
+    if (str_detect(header_value_ascii, title)) {
+      rank <- str_extract(header_value, "\\d+$")  # Extract the digits at the end
+      short_title <- title_mapping[[title]]  # Get the short form of the title
+      new_col_names[i] <- sprintf("%s_Rank_%s", short_title, rank)  # Create new name format
+      break  # Exit the loop after matching to a title
+    }
+  }
+}
+
+# Now, apply the new column names to the filtered data
+names(data) <- new_col_names
+data <- data[-1,]
+results_list <- list()
+for (col_name in names(data)) {
+  counts <- as.data.frame(table(data[[col_name]]))
+  
+  # Check if counts data frame is not empty
+  if (nrow(counts) > 0) {
+    counts$Freq <- as.numeric(counts$Freq)  # Convert Freq to numeric for sorting
+    counts <- counts[order(-counts$Freq), ]  # Sort by Freq in descending order
+    names(counts) <- c("Candidate", paste0(col_name, "_Count"))  # Rename columns
+    results_list[[col_name]] <- counts  # Add to results list
+  } else {
+    # Handle the case where counts is empty by adding a placeholder row if needed
+    results_list[[col_name]] <- data.frame(Candidate=NA, Count=0)
+  }
+}
+
+# Now, adjust lengths and combine
+max_rows <- max(sapply(results_list, nrow))
+
+# Standardize column names for the combination
+standardized_list <- lapply(results_list, function(df) {
+  names(df) <- c("Candidate", "Count")  # Standardize names
+  df
+})
+
+# Adjust lengths
+adjusted_list <- lapply(standardized_list, function(df) {
+  if (nrow(df) < max_rows) {
+    additional_rows <- max_rows - nrow(df)
+    df <- rbind(df, data.frame(Candidate = rep(NA, additional_rows), Count = rep(NA, additional_rows)))
+  }
+  df
+})
+
+# Combine the data frames side by side
+results_df <- do.call(cbind, adjusted_list)
+
+# Correct the column names to reflect their original data source
+col_names <- unlist(lapply(names(data), function(col_name) c(paste0(col_name, "_Candidate"), paste0(col_name, "_Count"))))
+names(results_df) <- col_names
+rownames(results_df) <- NULL
+results_df
+#write.csv(results_df, "./data/elections_results.csv")
+
